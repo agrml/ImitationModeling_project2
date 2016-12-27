@@ -12,8 +12,9 @@ NUM_PEOPLE = 500
 SPEED = 1  # floors per tick
 
 # timeouts
+# min correct timeout == 1
 DECISION_MAKING_TIME_MAX = 10
-OPEN_CLOSE_TIMEOUT = 3
+OPEN_TIMEOUT = 3
 COME_IN_TIMEOUT = 2
 WAIT_TIMEOUT = 5
 
@@ -25,7 +26,7 @@ class Elevator:
         self.target_floor = -1
         self.state = 'vacant'
         self.people = []
-        self.sleep_process = env.process(self.sleep())
+        self.sleep_process = env.process(self.process())
         self.on_the_go_stops = [0 for i in range(NUM_FLOORS)]  # where the elevator needs to stop to pick up passengers
 
     def is_full(self):
@@ -37,50 +38,73 @@ class Elevator:
     def is_moving_down(self):
         return self.target_floor < self.cur_floor
 
-    def start_movement(self):
-        while self.cur_floor != self.target_floor:
-            yield env.timeout(SPEED)
-            cur_floor_old = self.cur_floor
-            if self.is_moving_up():
-                self.cur_floor = min(self.cur_floor + SPEED, self.target_floor)
-            elif self.is_moving_down():
-                self.cur_floor = max(self.cur_floor - SPEED, self.target_floor)
-            else:
-                raise "err"
-            # stop to enter companions
-            if int(cur_floor_old) != int(self.cur_floor) and self.on_the_go_stops[int(self.cur_floor)]:
-                # enter passengers to the elevator
-                yield env.timeout(OPEN_CLOSE_TIMEOUT * 2 + self.on_the_go_stops[int(self.cur_floor)] * COME_IN_TIMEOUT)
-                for passenger in self.people:
-                    if passenger.cur_floor == int(self.cur_floor):
-                        passenger.stop_waiting()
-                self.on_the_go_stops[int(self.cur_floor)] = 0
+    def move(self):
+        yield env.timeout(SPEED)
+        if self.is_moving_up():
+            self.cur_floor = min(self.cur_floor + SPEED, self.target_floor)
+        elif self.is_moving_down():
+            self.cur_floor = max(self.cur_floor - SPEED, self.target_floor)
+        else:
+            raise "err"
+    
+    def process(self):
+        while True:
+            # sleep waiting for a call
+            while self.target_floor == -1:
+                yield env.timeout(1)
 
-        # we've arrived
-        yield env.timeout(OPEN_CLOSE_TIMEOUT)
-        # Come out
-        for passenger in people:
-            yield env.timeout(COME_IN_TIMEOUT)
-            passenger.release()
-        yield env.timeout(OPEN_CLOSE_TIMEOUT)
+            # start moving to-the-first-person
+            assert self.state == "go-to-the-first-person"
+            while self.cur_floor != self.target_floor:
+                self.move()
+            self.state = "on-the-go"
 
-        self.people.clear()
-        self.state = "vacant"
-        self.cur_floor = self.target_floor  # floor may not be int...
-        self.target_floor = -1
-        print("Elevator {} is free. Debug: self.on_the_go_stops".format(self.id), file=sys.stderr)
-        self.sleep_process = env.process(self.sleep())
+            # arrived to the first person
+            assert len(people) == 1 and self.state == "on-the-go"
+            self.target_floor = people[0].target_floor
+            cur_floor_old = -1
+            # enter first person and start moving to the target floor
+            while self.cur_floor != self.target_floor:
+                # stop to enter passengers
+                if int(cur_floor_old) != int(self.cur_floor) and self.on_the_go_stops[int(self.cur_floor)]:
+                    # enter passengers to the elevator
+                    yield env.timeout(
+                        OPEN_TIMEOUT * 2 + self.on_the_go_stops[int(self.cur_floor)] * COME_IN_TIMEOUT)
+                    for passenger in self.people:
+                        if passenger.cur_floor == int(self.cur_floor):
+                            passenger.stop_waiting()
+                    self.on_the_go_stops[int(self.cur_floor)] = 0
+                cur_floor_old = self.cur_floor
+                yield from self.move()
 
-    # adding person to SCHEDULE
-    def add_person(self, person):
+            # arrived to the target floor
+            yield env.timeout(OPEN_TIMEOUT)
+            # Come out
+            for passenger in people:
+                yield env.timeout(COME_IN_TIMEOUT)
+                passenger.release()
+            yield env.timeout(OPEN_TIMEOUT)
+
+            self.people.clear()
+            self.state = "vacant"
+            self.target_floor = -1
+            self.cur_floor = self.target_floor  # cur_floor might not be int...
+            print("Elevator {} is free. self.on_the_go_stops: {}".format(self.id, self.on_the_go_stops), file=sys.stderr)
+
+    # add person to SCHEDULE
+    #
+    # Here we chenge internal state of the elevator object. Consequently, the loop in the elevator process will be breaked, and elevator will start moving.
+    def go_to_person(self, person):
         self.people.append(person)
-
+        if self.state == "vacant":
+            self.state = "go-to-the-first-person"
+            self.target_floor = person.cur_floor
+            assert not sum(self.on_the_go_stops)
+        elif self.state == "go-to-the-first-person":
+            raise "err: adding passenger on the go to the first passengers is not supported"
+        self.on_the_go_stops[person.cur_floor] += 1
         # person.t0 = env.now
         # person.elevator_waiting = env.now - person.t0
-
-    def sleep(self):
-        while True:
-            yield env.timeout(1)
 
 
 class Person:
@@ -89,6 +113,10 @@ class Person:
         self.cur_floor = randint(0, NUM_FLOORS - 1)
         self.target_floor = -1
         self.process = env.process(self.process())
+        self.t0 = -1
+
+        self.waiting_time = int()
+        self.moving_time = int()
 
     def decide(self):
         while self.target_floor == self.cur_floor or self.target_floor < 0:
@@ -100,9 +128,20 @@ class Person:
         yield from self.decide()
         # print(person.id + ' decided to go from %d to  %d' % (person.cur_floor, person.target_floor))
 
-        # since this moment control flow lefts person.
+        self.t0 = env.now
         yield from system.call_elevator(self)
-        print("passenger ", str(self.id), " arrived. Next iter...")
+        #
+        # while self.cur_floor != self.target_floor:
+        #     env.timeout(1)
+        # print("passenger ", str(self.id), " arrived. Next iter...")
+
+    def release(self):
+        self.cur_floor = self.target_floor
+        self.moving_time = self.t0 - env.now
+
+    def enter(self):
+        self.waiting_time = env.now - self.t0
+        self.t0 = env.now
 
 
 class ElevatorSystem:
@@ -130,7 +169,6 @@ class ElevatorSystem:
                 if abs(vacant.cur_floor - person_cur_floor) < min_val:
                     min_val = abs(vacant.cur_floor - person_cur_floor)
                     elevator = vacant
-            elevator.sleep_process.interrupt()
             return elevator
 
     def call_elevator(self, person):
@@ -141,12 +179,9 @@ class ElevatorSystem:
                 break
             # print('Elevators are not available at %d. Please wait' % env.now)
             yield env.timeout(WAIT_TIMEOUT)
-        elevator.add_person(person)
-        if elevator.state == "vacant":
-            elevator.state = "on-the-go"
-            elevator.target_floor = person.target_floor  # FIXME: cur, not target!
-            elevator.on_the_go_stops[person.cur_floor] += 1
-            elevator.start_movement()
+        elevator.go_to_person(person)
+
+
 
 
 env = simpy.Environment()
