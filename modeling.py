@@ -51,10 +51,10 @@ class Elevator:
             raise "err"
     
     def process(self):
-        # while True:
+        while True:
             # sleep waiting for a call
             while not self.people:
-                print("{} waits".format(self.id))
+                # print("{} waits".format(self.id))
                 yield env.timeout(0.5)
 
             # start moving to-the-first-person
@@ -77,7 +77,7 @@ class Elevator:
                     yield env.timeout(
                         OPEN_TIMEOUT * 2 + self.on_the_go_stops[int(self.cur_floor)] * COME_IN_TIMEOUT)
                     for passenger in self.people:
-                        if passenger.cur_floor == int(self.cur_floor):
+                        if passenger.start_floor == int(self.cur_floor):
                             passenger.enter()
                     self.on_the_go_stops[int(self.cur_floor)] = 0
                 cur_floor_old = self.cur_floor
@@ -202,6 +202,8 @@ people = [Person(i) for i in range(NUM_PEOPLE)]
 
 # start simulation
 env.run(until=1200)
+
+print("end")
 
 
 
