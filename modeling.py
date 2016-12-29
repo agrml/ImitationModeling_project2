@@ -210,10 +210,10 @@ def analyse(people, system):
             m.append(elem)
     mean_people_number = np.mean(m)
 
-    print( mean_waiting_time + mean_moving_time)
-    print( mean_waiting_time)
-    print( mean_moving_time)
-    print( mean_people_number)
+    print(mean_waiting_time + mean_moving_time)
+    print(mean_waiting_time)
+    print(mean_moving_time)
+    print(mean_people_number)
 
 
 env = simpy.Environment()
@@ -225,7 +225,7 @@ system = ElevatorSystem()
 people = [Person(i) for i in range(NUM_PEOPLE)]
 
 # start simulation
-env.run(until=120000)
+env.run(until=1200)
 
 check(people)
 
