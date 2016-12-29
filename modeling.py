@@ -210,10 +210,10 @@ def analyse(people, system):
             m.append(elem)
     mean_people_number = np.mean(m)
 
-    print(mean_waiting_time + mean_moving_time)
-    print(mean_waiting_time)
-    print(mean_moving_time)
-    print(mean_people_number)
+    print("Mean Summarized Time:", mean_waiting_time + mean_moving_time)
+    print("Mean Waiting time:", mean_waiting_time)
+    print("Mean Trip Time:", mean_moving_time)
+    print("Mean People Number:", mean_people_number)
 
 
 env = simpy.Environment()
